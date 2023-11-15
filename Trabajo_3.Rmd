@@ -1,0 +1,319 @@
+---
+header-includes:
+- \usepackage{longtable}
+- \usepackage[utf8]{inputenc}
+- \usepackage[spanish]{babel}\decimalpoint
+- \setlength{\parindent}{1.25cm}
+- \usepackage{amsmath}
+- \usepackage{xcolor}
+- \usepackage{cancel}
+- \usepackage{array}
+- \usepackage{float}
+- \usepackage{multirow}
+output:
+  pdf_document: 
+    number_sections: yes
+fontsize: 12pt
+papersize: letter
+geometry: margin = 1in
+language: "es"
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, fig.align = "center",
+                      fig.height = 4.5, fig.pos = "H")
+
+library(tidyverse)
+library(tseries)
+library(dplyr)
+library(gridExtra)
+library(cowplot)
+library(kableExtra)
+library(GGally)
+library(knitr)
+library(strucchange)
+library(Metrics)
+library(forecast)
+library(ggplot2)
+library(uroot)
+```
+
+```{=tex}
+\input{titlepage}
+\thispagestyle{empty}
+\tableofcontents
+\newpage
+\thispagestyle{empty}
+\listoffigures
+\newpage
+```
+
+```{=tex}
+\pagestyle{myheadings}
+\setcounter{page}{4}
+```
+
+```{r,include=FALSE}
+calcular_metricas <- function ( predichos , observados ) {
+  rmse <- sqrt ( mean (( predichos - observados ) ^2) )
+  mae <- mean (abs( predichos - observados ) )
+  mape <- mean ( abs (( predichos - observados ) / observados ) ) * 100
+  u_theil <- sqrt ( mean (( predichos - observados ) ^2) ) / sqrt ( mean ( observados
+                                                                           ^2) )
+  resultados <- data.frame ( RMSE = rmse , MAE = mae , MAPE = mape ,
+                             U_Theil = u_theil )
+  return ( resultados )
+}
+
+calculate_mape <- function(actual, predicted) {
+  mean(abs((actual - predicted) / actual)) * 100
+}
+```
+
+```{r, include=FALSE}
+codensa = read.table("codensa.diaria.dat", header = TRUE, stringsAsFactors = FALSE) 
+codensa$date <- as.Date(codensa$date)
+```
+
+
+```{r, include=FALSE}
+summary(codensa)
+```
+
+
+```{r, include=FALSE}
+codensa_1<-ts(codensa$y, frequency = 7, start = c(1995,7))
+m<-15
+n<-length(codensa_1)-m
+t<-1:n
+yf=ts(codensa_1[(n-m+1):n], frequency=7)
+T=length(codensa_1)
+tp = seq(T+1,T+m)
+```
+
+```{r,include=FALSE}
+codensa_y<-ts(codensa_1[t], freq=7, start = c(1995,7))
+It<-seasonaldummy(codensa_y)
+
+tt=seq((T-15+1),T,1)
+tt2=tt*tt
+tt3=tt*tt*tt
+Itf = seasonaldummy(codensa_y,15)
+xtf=cbind(rep(1,15),tt,Itf)
+xtf2=cbind(rep(1,15),tt, tt2,Itf)
+```
+
+\noindent
+Recordemos el comportamientos de nuestra serie. 
+
+```{r,echo=FALSE, fig.cap="Grafica de la serie original"}
+ggplot(data = codensa, aes(x = date, y = y)) +
+  geom_line(color = "blue") + 
+  labs(x = "Fecha", y = "Valores") +
+  theme_minimal() +
+  ggtitle("Serie de Tiempo de Codensa")
+```
+
+\section{Punto 1.}
+
+\noindent
+\textbf{(34/34)} Estime un modelo ARIMA - SARIMA para la serie original, con base en el resultado de auto.arima(). Con el modelo escogido valide los residuos con la fac y la prueba Ljung-Box. Reporte los resultados.
+
+```{r,echo=FALSE}
+model_arima <- auto.arima(codensa_y, stepwise = F, approximation = F)
+model_arima
+```
+
+\noindent
+Tenemos que la para nuestra serie original vamos a estimar un modelo ARIMA(1,0,1)(2,1,0)[7]. Veamos un poco la descomposicion de los residuales de este modelo y como es su comportamiento.
+
+
+```{r,echo=FALSE, fig.cap="Grafico del checkresiduals para el modelo"}
+checkresiduals(model_arima)
+```
+
+
+```{r,echo=FALSE, fig.cap= "Grafica de la ACF y PACF"}
+# Cálculo de la FAC y prueba de incorrelación Ljung-Box
+par(mfrow=c(2,1))
+acf(residuals(model_arima),lag.max = 60, ci.type="ma", main="Autocorrelation Function (ACF)") #Bandas de Bartlett
+pacf(residuals(model_arima),main="Partial Autocorrelation Function (PACF)")
+```
+
+
+```{r}
+Box.test(residuals(model_arima), lag = 20, type = "Ljung-Box")
+```
+
+\noindent
+El resultado de la prueba de incorrelación Ljung-Box muestra un estadístico chi-cuadrado (X-squared) de 26.108 con 20 grados de libertad y un valor p grande de 0.1623. Esto indica que NO hay evidencia significativa de autocorrelación en los residuos del modelo. En otras palabras, los residuos si pueden considerarse como ruido blanco, ya que NO muestran patrones de autocorrelación.
+
+
+\section{Punto 2.}
+
+\noindent
+\textbf{(33/33)} Realice las Pruebas de raiz unitaria estacional: 1)Dickey-Fuller aumentada, 2) HEGY. Concluya sobre si existen raíces unitaria ordinaria y estacionales
+
+\noindent
+\textbf{Prueba Dickey-Fuller aumentada}
+
+```{r, warning=FALSE}
+adf.test(codensa_y)
+```
+
+\noindent
+El resultado de la prueba de Dickey-Fuller aumentada muestra un estadístico de -7.2858 a 9 lags y un valor p pequeño de 0.01. Por lo tanto se rechaza la hipotesis nula, es decir que no existe raiz unitaria, debido a que los datos proporcionan evidencia de que los datos son estacionarios.
+
+\noindent
+\textbf{Prueba HEGY}
+
+```{r}
+hegy.test(codensa_y, deterministic = c(1,0,0))
+```
+
+\noindent
+Tenemos que el resultado de la prueba HEGY muestra valores p pequeños. Por lo tanto se rechaza la hipótesis nula de la existencia de raíces unitarias en las frecuencias estacionales y en la frecuencia cero.
+
+\section{Punto 3.}
+
+\noindent
+\textbf{(33/33)} Calculemos pronósticos para   la validación cruzada con los 2 modelos: 1) el que mejor pronosticó en los Trabajos No 1 y 2, versus 2) el modelo ARIMA SARIMA encontrado en el punto 1). Reporte MAPE, RMSE, U-Theil para ambos conjuntos de pron´osticos. Concluya cu´al modelo pronosticó mejo
+
+\noindent
+Recordemos que el mejor pronostico en los trabajos 1 y 2 fue el que se llego con la funcion autoarima, dando como resultado un modelo ARIMA(2,0,1) para los residuos del modelo cubico con un componente autorregresivo de orden 2 (AR(2)), un componente de media móvil de orden 1 (MA(1)), y una media de cero. Posteriormente le agregamos los pronosticos del modelo ARMA-SARMA a los pronosticos del modelo estructural escogido y obtuvimos que este era mejor que los pronosticados solo con el modelo cubico.
+
+```{r,include=FALSE}
+# Residuos del modelo cubico
+modelo_cubico <- lm(codensa_y ~ t + I(t^2) + I(t^3)+ It)
+residuos_cub <- residuals(modelo_cubico)
+
+# Estimar el modelo identificado por auto.arima
+modelo_estimado <- arima(residuos_cub, order = c(2,0,1))
+
+# Mostrar el resumen del modelo
+summary(modelo_estimado)
+
+# Pronósticos para el modelo cúbico Trabajo1
+pred_cubico <- predict(modelo_cubico, data.frame(t=tt, t2=tt2, t3=tt3, It=I(Itf)))
+```
+
+```{r,include=FALSE}
+#pronosticos primer modelo
+pronosticos_fore <- forecast(modelo_estimado, 15)
+```
+
+```{r,include=FALSE}
+#pronosticos segundo modelo
+pronosticos_arima<-forecast(model_arima,15)
+```
+
+\noindent
+Ahora veamos las metricas de los dos modelos 
+
+\noindent
+\textbf{Tabla de Resultados de metricas para el modelo Estr+ARMA-SARMA}
+
+```{r,echo=FALSE}
+yf<-as.numeric(yf)
+pronosticos<-pronosticos_fore$mean
+pronosticos<-pred_cubico+as.numeric(pronosticos)
+
+pronosticos2<-pronosticos_arima$mean
+
+rmse_fore <- rmse(yf, pronosticos)
+mae_fore <- mae(yf, pronosticos)
+mape_fore <- calculate_mape(yf, pronosticos)
+u_theil_fore <- 1 / (length(yf)) * sum(((yf - pronosticos) ^ 2) / (yf * pronosticos))
+
+rmse_arima <- rmse(yf, pronosticos2)
+mae_arima <- mae(yf, pronosticos2)
+mape_arima<- calculate_mape(yf, pronosticos2)
+u_theil_arima <- 1 / (length(yf)) * sum(((yf - pronosticos2) ^ 2) / (yf * pronosticos2))
+
+metricas.fore <- data.frame(
+Modelo = c("Estr+ARMA-SARMA"),
+RMSE = c(rmse_fore), MAE = c(mae_fore), MAPE = c(mape_fore), U_Theil = c(u_theil_fore))
+kable(metricas.fore )
+```
+
+\noindent
+\textbf{Tabla de Resultados de metricas para el modelo Estr+ARMA-SARMA}
+
+```{r,echo=FALSE}
+metricas.arima <- data.frame(
+Modelo = c("ARIMA - SARIMA"),
+RMSE = c(rmse_arima), MAE = c(mae_arima), MAPE = c(mape_arima), U_Theil = c(u_theil_arima))
+kable(metricas.arima )
+```
+
+\noindent
+Evidentemente vemos que el modelo estructural más el modelo de residuos ARMA-SARMA sigue teniendo una métricas menores que el modelo ARIMA-SARIMA. Por lo que concluimos que el primer modelo es mejor.
+
+\noindent
+Veamoslo mejor gráficamente.
+
+```{r,include=FALSE}
+train_data <- codensa[1:(nrow(codensa) - 15), ]
+test_data <- codensa[(nrow(codensa) - 14):nrow(codensa), ]
+pred_cubico<-as.numeric(pred_cubico)
+pronosticos<-as.numeric(pronosticos)
+pronosticos2<-as.numeric(pronosticos2)
+```
+
+```{r,echo=FALSE, warning=FALSE}
+ggplot(data = test_data, aes(x = date)) +
+  xlim(min(test_data$date), max(test_data$date))+
+  geom_line(aes(y = y, color = "Observados"), size = 1) +
+  geom_line(aes(y = pronosticos, color = "Modelo1"), size = 1, linetype = "dashed") +
+  geom_line(aes(y = pronosticos2, color = "Modelo2"), size = 1, linetype = "dotted") +
+  labs(
+    x = "Tiempo",
+    y = "Valor",
+    title = "Datos Observados, Pronosticados Mod Cúbico y Pronosticados Mod Estr+ARMA-SARMA"
+  ) +
+  scale_color_manual(
+    name = "Series",
+    values = c(Observados = "blue", Modelo1 = "red", Modelo2 = "green")
+  ) +
+  theme_minimal()
+
+```
+
+\noindent
+veamos como las predicciones de los dos modelos son muy parecidas aunque su diferencia es un poco pequeña numéricamente y ademas notemos que el modelo 1 se acerca más para predecir las observaciones reales como lo podemos ver a continuación.
+
+
+\noindent
+\textbf{Datos observados}
+
+```{r}
+test_data$y
+```
+
+\noindent
+\textbf{Pronosticos Modelo cubico+ARMA-SARMA}
+
+
+```{r,echo=FALSE}
+pronosticos
+```
+
+\noindent
+\textbf{Pronosticos ARIMA - SARIMA}
+
+```{r,echo=FALSE}
+pronosticos2
+```
+
+\section{Código}
+
+\noindent
+En el siguiente link se redireccionara a un repositorio donde encuentra todo el trabajo y los codigos empleados para su solución:
+
+\noindent
+https://github.com/cristiancacz2311/Trabajo_3_Tecnicas_de_pronostico
+
+
